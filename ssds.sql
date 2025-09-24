@@ -8,7 +8,17 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ==========================================================
--- TRIGGER FUNCTION FOR updated_at
+-- ENUM TYPES
+-- ==========================================================
+CREATE TYPE order_status AS ENUM ('open', 'pending', 'paid', 'shipped', 'completed', 'cancelled');
+CREATE TYPE cart_status AS ENUM ('open', 'abandoned');
+CREATE TYPE payment_status AS ENUM ('pending', 'completed', 'failed', 'refunded');
+CREATE TYPE discount_type AS ENUM ('percent', 'fixed', 'flash', 'bundle');
+CREATE TYPE shipping_status AS ENUM ('pending', 'shipped', 'delivered', 'cancelled');
+CREATE TYPE notification_status AS ENUM ('pending', 'sent', 'failed');
+
+-- ==========================================================
+-- TRIGGER FUNCTION: updated_at
 -- ==========================================================
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
@@ -17,46 +27,6 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
--- ==========================================================
--- TRIGGER FUNCTION FOR item total
--- ==========================================================
-CREATE OR REPLACE FUNCTION compute_order_item_total()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.total = NEW.unit_price * NEW.quantity;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION compute_cart_item_total()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.total = NEW.unit_price * NEW.quantity;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- ==========================================================
--- USERS & AUTH
--- ==========================================================
-CREATE TABLE IF NOT EXISTS user_account (
-    id BIGSERIAL PRIMARY KEY,
-    uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
-    email TEXT NOT NULL UNIQUE,
-    phone TEXT,
-    password_hash TEXT NOT NULL,
-    first_name TEXT,
-    last_name TEXT,
-    is_active BOOLEAN DEFAULT TRUE,
-    is_staff BOOLEAN DEFAULT FALSE,
-    role TEXT DEFAULT 'customer',
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_user_email ON user_account (lower(email));
-CREATE TRIGGER trg_user_account_updated
-BEFORE UPDATE ON user_account FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- ==========================================================
 -- ROLES & PERMISSIONS
@@ -84,6 +54,26 @@ CREATE TABLE IF NOT EXISTS role_permission (
     PRIMARY KEY (role_id, permission_id)
 );
 
+-- ==========================================================
+-- USERS
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS user_account (
+    id BIGSERIAL PRIMARY KEY,
+    uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    phone TEXT UNIQUE,
+    password TEXT NOT NULL,
+    first_name TEXT DEFAULT '',
+    last_name TEXT DEFAULT '',
+    is_active BOOLEAN DEFAULT TRUE,
+    is_staff BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_email ON user_account (lower(email));
+CREATE TRIGGER trg_user_account_updated
+BEFORE UPDATE ON user_account FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
 CREATE TABLE IF NOT EXISTS user_role (
     user_id BIGINT REFERENCES user_account(id) ON DELETE CASCADE,
     role_id BIGINT REFERENCES role(id) ON DELETE CASCADE,
@@ -91,24 +81,18 @@ CREATE TABLE IF NOT EXISTS user_role (
 );
 
 -- ==========================================================
--- CATEGORIES
+-- CATEGORY & PRODUCTS
 -- ==========================================================
 CREATE TABLE IF NOT EXISTS category (
     id BIGSERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    slug TEXT NOT NULL UNIQUE,
-    parent_id BIGINT REFERENCES category(id) ON DELETE SET NULL,
-    metadata JSONB DEFAULT '{}'::jsonb,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_category_name_trgm ON category USING gin(name gin_trgm_ops);
 CREATE TRIGGER trg_category_updated
 BEFORE UPDATE ON category FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
--- ==========================================================
--- PRODUCTS
--- ==========================================================
 CREATE TABLE IF NOT EXISTS product (
     id BIGSERIAL PRIMARY KEY,
     sku TEXT UNIQUE,
@@ -134,9 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_product_name_trgm ON product USING gin(name gin_t
 CREATE TRIGGER trg_product_updated
 BEFORE UPDATE ON product FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
--- ==========================================================
--- PRODUCT IMAGES
--- ==========================================================
+-- Product Images
 CREATE TABLE IF NOT EXISTS product_image (
     id BIGSERIAL PRIMARY KEY,
     product_id BIGINT REFERENCES product(id) ON DELETE CASCADE,
@@ -153,62 +135,60 @@ CREATE TRIGGER trg_product_image_updated
 BEFORE UPDATE ON product_image FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- ==========================================================
+-- WISHLIST
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS wishlist (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES user_account(id) ON DELETE CASCADE,
+    product_id BIGINT REFERENCES product(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (user_id, product_id)
+);
+
+CREATE OR REPLACE VIEW wishlist_with_details AS
+SELECT w.id, w.user_id, p.id AS product_id, p.name, p.price,
+       (SELECT path FROM product_image pi WHERE pi.product_id = p.id AND pi.is_primary = TRUE LIMIT 1) AS image_url
+FROM wishlist w
+JOIN product p ON w.product_id = p.id;
+
+-- ==========================================================
 -- PRODUCT VARIANTS
 -- ==========================================================
 CREATE TABLE IF NOT EXISTS product_variant (
     id BIGSERIAL PRIMARY KEY,
     product_id BIGINT REFERENCES product(id) ON DELETE CASCADE,
-    sku TEXT UNIQUE,
+    sku TEXT,
     name TEXT NOT NULL,
     price NUMERIC(12,2) NOT NULL DEFAULT 0,
     stock INT DEFAULT 0,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(product_id, sku)
 );
 CREATE TRIGGER trg_product_variant_updated
 BEFORE UPDATE ON product_variant FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_variant_default
+ON product_variant(product_id) WHERE sku IS NULL;
 
 -- ==========================================================
 -- CARTS & ORDERS
 -- ==========================================================
-CREATE TABLE IF NOT EXISTS order_cart (
+CREATE TABLE IF NOT EXISTS cart (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES user_account(id) ON DELETE SET NULL,
+    user_id BIGINT REFERENCES user_account(id) ON DELETE CASCADE,
     session_id UUID,
-    status TEXT NOT NULL DEFAULT 'open',
-    total NUMERIC(12,2) DEFAULT 0,
-    metadata JSONB DEFAULT '{}'::jsonb,
+    status cart_status NOT NULL DEFAULT 'open',
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_order_user ON order_cart(user_id);
-CREATE INDEX IF NOT EXISTS idx_order_status ON order_cart(status);
-CREATE TRIGGER trg_order_cart_updated
-BEFORE UPDATE ON order_cart FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+CREATE INDEX IF NOT EXISTS idx_cart_user ON cart(user_id);
+CREATE TRIGGER trg_cart_updated
+BEFORE UPDATE ON cart FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
-CREATE TABLE IF NOT EXISTS order_item (
-    id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT REFERENCES order_cart(id) ON DELETE CASCADE,
-    product_id BIGINT REFERENCES product(id) ON DELETE RESTRICT,
-    unit_price NUMERIC(12,2) NOT NULL,
-    quantity INT NOT NULL DEFAULT 1,
-    total NUMERIC(12,2) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_order_item_order_product ON order_item(order_id, product_id);
-CREATE TRIGGER trg_order_item_updated
-BEFORE UPDATE ON order_item FOR EACH ROW EXECUTE FUNCTION update_timestamp();
-CREATE TRIGGER trg_order_item_total
-BEFORE INSERT OR UPDATE ON order_item FOR EACH ROW EXECUTE FUNCTION compute_order_item_total();
-
--- ==========================================================
--- CART ITEMS
--- ==========================================================
 CREATE TABLE IF NOT EXISTS cart_item (
     id BIGSERIAL PRIMARY KEY,
-    cart_id BIGINT REFERENCES order_cart(id) ON DELETE CASCADE,
+    cart_id BIGINT REFERENCES cart(id) ON DELETE CASCADE,
     product_id BIGINT REFERENCES product(id) ON DELETE RESTRICT,
     variant_id BIGINT REFERENCES product_variant(id) ON DELETE RESTRICT,
     quantity INT NOT NULL DEFAULT 1,
@@ -221,15 +201,82 @@ CREATE TABLE IF NOT EXISTS cart_item (
 CREATE INDEX IF NOT EXISTS idx_cart_item_cart ON cart_item(cart_id);
 CREATE TRIGGER trg_cart_item_updated
 BEFORE UPDATE ON cart_item FOR EACH ROW EXECUTE FUNCTION update_timestamp();
-CREATE TRIGGER trg_cart_item_total
-BEFORE INSERT OR UPDATE ON cart_item FOR EACH ROW EXECUTE FUNCTION compute_cart_item_total();
 
 -- ==========================================================
--- ORDER DISCOUNTS
+-- CUSTOMER ORDERS & ORDER ITEMS
 -- ==========================================================
+CREATE TABLE IF NOT EXISTS customer_order (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES user_account(id) ON DELETE SET NULL,
+    status order_status NOT NULL DEFAULT 'pending',
+    total NUMERIC(12,2) DEFAULT 0,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_customer_order_user ON customer_order(user_id);
+CREATE TRIGGER trg_customer_order_updated
+BEFORE UPDATE ON customer_order FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TABLE IF NOT EXISTS order_item (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT REFERENCES customer_order(id) ON DELETE CASCADE,
+    product_id BIGINT REFERENCES product(id) ON DELETE RESTRICT,
+    unit_price NUMERIC(12,2) NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    total NUMERIC(12,2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_order_item_order_product ON order_item(order_id, product_id);
+CREATE TRIGGER trg_order_item_updated
+BEFORE UPDATE ON order_item FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+-- ==========================================================
+-- PAYMENTS
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS payment (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT REFERENCES customer_order(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    transaction_id TEXT UNIQUE,
+    amount NUMERIC(12,2) NOT NULL,
+    currency TEXT DEFAULT 'USD',
+    status payment_status DEFAULT 'pending',
+    paid_at TIMESTAMPTZ,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_payment_order ON payment(order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_status ON payment(status);
+CREATE TRIGGER trg_payment_updated
+BEFORE UPDATE ON payment FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+-- ==========================================================
+-- DISCOUNTS
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS product_discount (
+    id BIGSERIAL PRIMARY KEY,
+    product_id BIGINT REFERENCES product(id) ON DELETE CASCADE,
+    code TEXT,
+    type discount_type NOT NULL,
+    amount NUMERIC(12,2) NOT NULL,
+    starts_at TIMESTAMPTZ,
+    ends_at TIMESTAMPTZ,
+    active BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_product_discount_product ON product_discount(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_discount_active ON product_discount(product_id, active, starts_at, ends_at);
+CREATE TRIGGER trg_product_discount_updated
+BEFORE UPDATE ON product_discount FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
 CREATE TABLE IF NOT EXISTS order_discount (
     id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT REFERENCES order_cart(id) ON DELETE CASCADE,
+    order_id BIGINT REFERENCES customer_order(id) ON DELETE CASCADE,
     discount_id BIGINT REFERENCES product_discount(id) ON DELETE SET NULL,
     amount NUMERIC(12,2) NOT NULL DEFAULT 0,
     metadata JSONB DEFAULT '{}'::jsonb,
@@ -241,7 +288,7 @@ CREATE TRIGGER trg_order_discount_updated
 BEFORE UPDATE ON order_discount FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- ==========================================================
--- SHIPPING METHODS
+-- SHIPPING
 -- ==========================================================
 CREATE TABLE IF NOT EXISTS shipping_method (
     id BIGSERIAL PRIMARY KEY,
@@ -256,16 +303,13 @@ CREATE TABLE IF NOT EXISTS shipping_method (
 CREATE TRIGGER trg_shipping_method_updated
 BEFORE UPDATE ON shipping_method FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
--- ==========================================================
--- ORDER SHIPPING
--- ==========================================================
 CREATE TABLE IF NOT EXISTS order_shipping (
     id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT REFERENCES order_cart(id) ON DELETE CASCADE,
+    order_id BIGINT REFERENCES customer_order(id) ON DELETE CASCADE,
     shipping_method_id BIGINT REFERENCES shipping_method(id) ON DELETE SET NULL,
     cost NUMERIC(12,2) NOT NULL DEFAULT 0,
     tracking_number TEXT,
-    status TEXT DEFAULT 'pending',
+    status shipping_status DEFAULT 'pending',
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
@@ -273,87 +317,6 @@ CREATE TABLE IF NOT EXISTS order_shipping (
 CREATE INDEX IF NOT EXISTS idx_order_shipping_order ON order_shipping(order_id);
 CREATE TRIGGER trg_order_shipping_updated
 BEFORE UPDATE ON order_shipping FOR EACH ROW EXECUTE FUNCTION update_timestamp();
-
--- ==========================================================
--- COMPUTE ORDER CART TOTAL
--- ==========================================================
-CREATE OR REPLACE FUNCTION compute_order_cart_total()
-RETURNS TRIGGER AS $$
-DECLARE
-    cart_id BIGINT;
-    items_total NUMERIC(12,2);
-    cart_items_total NUMERIC(12,2);
-    discounts_total NUMERIC(12,2);
-    shipping_total NUMERIC(12,2);
-BEGIN
-    cart_id := COALESCE(NEW.order_id, OLD.order_id);
-
-    SELECT COALESCE(SUM(total),0) INTO items_total FROM order_item WHERE order_id = cart_id;
-    SELECT COALESCE(SUM(total),0) INTO cart_items_total FROM cart_item WHERE cart_id = cart_id;
-    SELECT COALESCE(SUM(amount),0) INTO discounts_total FROM order_discount WHERE order_id = cart_id;
-    SELECT COALESCE(SUM(cost),0) INTO shipping_total FROM order_shipping WHERE order_id = cart_id;
-
-    UPDATE order_cart
-    SET total = items_total + cart_items_total + shipping_total - discounts_total
-    WHERE id = cart_id;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Triggers to update order_cart total
-CREATE TRIGGER trg_order_cart_total_after_item_change
-AFTER INSERT OR UPDATE OR DELETE ON order_item
-FOR EACH ROW EXECUTE FUNCTION compute_order_cart_total();
-
-CREATE TRIGGER trg_order_cart_total_after_cart_item_change
-AFTER INSERT OR UPDATE OR DELETE ON cart_item
-FOR EACH ROW EXECUTE FUNCTION compute_order_cart_total();
-
-CREATE TRIGGER trg_order_cart_total_after_discount_change
-AFTER INSERT OR UPDATE OR DELETE ON order_discount
-FOR EACH ROW EXECUTE FUNCTION compute_order_cart_total();
-
-CREATE TRIGGER trg_order_cart_total_after_shipping_change
-AFTER INSERT OR UPDATE OR DELETE ON order_shipping
-FOR EACH ROW EXECUTE FUNCTION compute_order_cart_total();
-
--- ==========================================================
--- PAYMENTS
--- ==========================================================
-CREATE TABLE IF NOT EXISTS payment (
-    id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT REFERENCES order_cart(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    transaction_id TEXT UNIQUE,
-    amount NUMERIC(12,2) NOT NULL,
-    currency TEXT DEFAULT 'USD',
-    status TEXT DEFAULT 'pending',
-    paid_at TIMESTAMPTZ,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_payment_order ON payment(order_id);
-CREATE INDEX IF NOT EXISTS idx_payment_status ON payment(status);
-CREATE TRIGGER trg_payment_updated
-BEFORE UPDATE ON payment FOR EACH ROW EXECUTE FUNCTION update_timestamp();
-
--- ==========================================================
--- REFUNDS
--- ==========================================================
-CREATE TABLE IF NOT EXISTS refund (
-    id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT REFERENCES order_cart(id) ON DELETE CASCADE,
-    amount NUMERIC(12,2) NOT NULL,
-    reason TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_refund_order_status ON refund(order_id, status);
-CREATE TRIGGER trg_refund_updated
-BEFORE UPDATE ON refund FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- ==========================================================
 -- WISHLIST
@@ -409,26 +372,27 @@ CREATE TRIGGER trg_product_review_updated
 BEFORE UPDATE ON product_review FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- ==========================================================
--- DISCOUNTS & PROMOTIONS
+-- FEATURED PRODUCTS
 -- ==========================================================
-CREATE TABLE IF NOT EXISTS product_discount (
+CREATE TABLE IF NOT EXISTS featured_product (
     id BIGSERIAL PRIMARY KEY,
-    product_id BIGINT REFERENCES product(id) ON DELETE CASCADE,
-    code TEXT,
-    type TEXT NOT NULL, -- percent, fixed, flash, bundle
-    amount NUMERIC(12,2) NOT NULL,
-    starts_at TIMESTAMPTZ,
-    ends_at TIMESTAMPTZ,
-    active BOOLEAN DEFAULT TRUE,
+    product_id BIGINT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    start_date TIMESTAMPTZ DEFAULT now(),
+    end_date TIMESTAMPTZ,
+    priority INT DEFAULT 0, -- higher = more prominent
+    is_personalized BOOLEAN DEFAULT FALSE, -- admin flag to mark as personalized campaign
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(product_id, start_date) -- prevents duplicate active entries
 );
-CREATE INDEX IF NOT EXISTS idx_product_discount_product ON product_discount(product_id);
-CREATE INDEX IF NOT EXISTS idx_product_discount_active ON product_discount(product_id, active, starts_at, ends_at);
-CREATE TRIGGER trg_product_discount_updated
-BEFORE UPDATE ON product_discount FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
+CREATE INDEX IF NOT EXISTS idx_featured_product_active
+    ON featured_product (start_date, end_date, priority);
+
+CREATE TRIGGER trg_featured_product_updated
+BEFORE UPDATE ON featured_product
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- ==========================================================
 -- USER EVENTS
@@ -522,7 +486,7 @@ CREATE TABLE IF NOT EXISTS notification_queue (
     template_id BIGINT REFERENCES notification_template(id),
     context JSONB DEFAULT '{}'::jsonb,
     priority INT DEFAULT 100,
-    status TEXT DEFAULT 'pending',
+    status notification_status DEFAULT 'pending',
     error TEXT,
     scheduled_at TIMESTAMPTZ DEFAULT now(),
     attempts INT DEFAULT 0,
@@ -551,24 +515,5 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log(user_id, created_at);
-
--- ==========================================================
--- ADDRESS BOOK
--- ==========================================================
-CREATE TABLE IF NOT EXISTS user_address (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES user_account(id) ON DELETE CASCADE,
-    address_line1 TEXT NOT NULL,
-    address_line2 TEXT,
-    city TEXT NOT NULL,
-    state TEXT,
-    postal_code TEXT NOT NULL,
-    country TEXT NOT NULL,
-    is_default BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE TRIGGER trg_user_address_updated
-BEFORE UPDATE ON user_address FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 COMMIT;

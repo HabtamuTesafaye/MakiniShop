@@ -66,7 +66,7 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
     date_joined = models.DateTimeField(default=timezone.now)
     
     # Multi-role support
-    roles = models.ManyToManyField(Role, through='UserRole', related_name='users')
+    roles = models.ManyToManyField(Role, through='UserRole', related_name='useraccount_set')
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
