@@ -7,14 +7,15 @@ from .serializers import (
     CategorySerializer, ProductSerializer, FeaturedProductSerializer, WishlistSerializer
 )
 
-CACHE_TIMEOUT = 60  # seconds, adjust as needed
+CACHE_TIMEOUT = 60  # seconds
 
 # -----------------------------
 # Category
 # -----------------------------
 class CategoryListView(generics.ListAPIView):
-    queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    queryset = Category.objects.all()
+
 
 # -----------------------------
 # Product
@@ -23,7 +24,11 @@ class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
 
     def get_queryset(self):
-        cache_key = f"product_list:{self.request.query_params}"
+        if getattr(self, "swagger_fake_view", False):
+            return Product.objects.none()
+
+        # Encode query params to avoid CacheKeyWarning
+        cache_key = f"product_list:{self.request.query_params.urlencode()}"
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -56,17 +61,22 @@ class ProductListView(generics.ListAPIView):
 
 
 class ProductDetailView(generics.RetrieveAPIView):
-    queryset = Product.objects.all().select_related('category').prefetch_related('images', 'variants')
     serializer_class = ProductSerializer
+    queryset = Product.objects.all().select_related('category').prefetch_related('images', 'variants')
     lookup_field = 'id'
+
 
 # -----------------------------
 # Featured Products
 # -----------------------------
 class FeaturedProductListView(generics.ListAPIView):
     serializer_class = FeaturedProductSerializer
+    queryset = FeaturedProduct.objects.none()
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return FeaturedProduct.objects.none()
+
         now = timezone.now()
         return FeaturedProduct.objects.filter(
             start_date__lte=now,
@@ -79,8 +89,12 @@ class FeaturedProductListView(generics.ListAPIView):
 
 class PersonalizedFeaturedProductListView(generics.ListAPIView):
     serializer_class = FeaturedProductSerializer
+    queryset = FeaturedProduct.objects.none()
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return FeaturedProduct.objects.none()
+
         user = self.request.user if self.request.user.is_authenticated else None
         now = timezone.now()
         queryset = FeaturedProduct.objects.filter(
@@ -95,14 +109,15 @@ class PersonalizedFeaturedProductListView(generics.ListAPIView):
 
         # Personalization: wishlist boost
         wishlist_ids = set(Wishlist.objects.filter(user=user).values_list('product_id', flat=True))
+
         def personalization_score(fp):
             score = 1.0 if fp.product.id in wishlist_ids else 0.0
-            # TODO: Add rating, embeddings, event score
-            return score + (fp.priority / 100)  # small weight fallback
+            return score + (fp.priority / 100)
 
         items = list(queryset)
         items.sort(key=lambda x: personalization_score(x), reverse=True)
         return items
+
 
 # -----------------------------
 # Admin Featured Products
@@ -123,14 +138,18 @@ class AdminFeaturedProductDeleteView(generics.DestroyAPIView):
     queryset = FeaturedProduct.objects.all()
     lookup_field = 'id'
 
+
 # -----------------------------
 # Wishlist
 # -----------------------------
 class WishlistListView(generics.ListAPIView):
     serializer_class = WishlistSerializer
     permission_classes = [permissions.IsAuthenticated]
+    queryset = Wishlist.objects.none()
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Wishlist.objects.none()
         return Wishlist.objects.filter(user=self.request.user) \
             .select_related('product', 'product__category') \
             .prefetch_related('product__images', 'product__variants')
@@ -148,6 +167,9 @@ class WishlistDeleteView(generics.DestroyAPIView):
     serializer_class = WishlistSerializer
     permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'id'
+    queryset = Wishlist.objects.none()
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Wishlist.objects.none()
         return Wishlist.objects.filter(user=self.request.user)

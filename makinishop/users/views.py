@@ -59,7 +59,7 @@ class LogoutView(generics.GenericAPIView):
 # Set Default Address
 # -----------------------------
 class SetDefaultAddressView(generics.GenericAPIView):
-    serializer_class = None
+    serializer_class = EmptySerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, id, *args, **kwargs):
@@ -95,14 +95,3 @@ class UserAddressDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return UserAddress.objects.filter(user=self.request.user)
 
-class SetDefaultAddressView(generics.GenericAPIView):
-    serializer_class = EmptySerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, id, *args, **kwargs):
-        address = UserAddress.objects.filter(id=id, user=request.user).first()
-        if not address:
-            return Response({'error': 'Address not found'}, status=status.HTTP_404_NOT_FOUND)
-        address.is_default = True
-        address.save()
-        return Response({'message': 'Default address updated'}, status=status.HTTP_200_OK)
