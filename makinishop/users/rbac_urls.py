@@ -1,4 +1,4 @@
-# users/urls.py
+# rbac_urls/urls.py
 from django.urls import path
 from . import rbac_views
 

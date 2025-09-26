@@ -1,9 +1,9 @@
 from django.db import models
 from django.contrib.postgres.indexes import GinIndex
-from django.contrib.postgres.fields import JSONField
+from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
-
+from django.conf import settings
 
 # ==========================================================
 # CATEGORY
@@ -36,7 +36,7 @@ class Product(models.Model):
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True)
     stock = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
-    metadata = JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     avg_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     rating_count = models.IntegerField(default=0)
     review_count = models.IntegerField(default=0)
@@ -70,14 +70,12 @@ class ProductImage(models.Model):
     is_primary = models.BooleanField(default=False)
     width = models.IntegerField(null=True, blank=True)
     height = models.IntegerField(null=True, blank=True)
-    metadata = JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [
-            models.Index(fields=['product']),
-        ]
+        indexes = [models.Index(fields=['product'])]
 
     def __str__(self):
         return f"{self.product.name} - {'Primary' if self.is_primary else 'Secondary'}"
@@ -92,15 +90,13 @@ class ProductVariant(models.Model):
     name = models.CharField(max_length=255)
     price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     stock = models.IntegerField(default=0)
-    metadata = JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = ('product', 'sku')
-        indexes = [
-            models.Index(fields=['product']),
-        ]
+        indexes = [models.Index(fields=['product'])]
 
     def __str__(self):
         return f"{self.product.name} - {self.name}"
@@ -115,28 +111,41 @@ class FeaturedProduct(models.Model):
     end_date = models.DateTimeField(null=True, blank=True)
     priority = models.IntegerField(default=0)
     is_personalized = models.BooleanField(default=False)
-    metadata = JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = ('product', 'start_date')
-        indexes = [
-            models.Index(fields=['start_date', 'end_date', 'priority']),
-        ]
+        indexes = [models.Index(fields=['start_date', 'end_date', 'priority'])]
 
     def __str__(self):
         return f"Featured: {self.product.name}"
 
 
 # ==========================================================
-# PRODUCT EMBEDDING (AI/Recommendations)
+# PRODUCT EMBEDDING (AI / Recommendations)
 # ==========================================================
 class ProductEmbedding(models.Model):
     product = models.OneToOneField(Product, on_delete=models.CASCADE)
-    embedding = models.BinaryField()  # Using BinaryField for vector storage
+    embedding = models.BinaryField()  # Binary vector storage
     model = models.CharField(max_length=255)
     updated_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return f"Embedding: {self.product.name}"
+
+
+# ==========================================================
+# WISHLIST
+# ==========================================================
+class Wishlist(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="wishlist")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ("user", "product")
+
+    def __str__(self):
+        return f"{self.user} → {self.product.name}"

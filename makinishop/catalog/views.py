@@ -1,10 +1,13 @@
-from rest_framework import viewsets, generics, status
-from rest_framework.response import Response
+from rest_framework import generics, permissions
 from django.utils import timezone
-from django.db.models import Q
-from .models import Category, Product, FeaturedProduct
-from .serializers import CategorySerializer, ProductSerializer, FeaturedProductSerializer
+from django.db.models import Q, Prefetch
+from django.core.cache import cache
+from .models import Category, Product, FeaturedProduct, Wishlist, ProductImage, ProductVariant
+from .serializers import (
+    CategorySerializer, ProductSerializer, FeaturedProductSerializer, WishlistSerializer
+)
 
+CACHE_TIMEOUT = 60  # seconds, adjust as needed
 
 # -----------------------------
 # Category
@@ -13,7 +16,6 @@ class CategoryListView(generics.ListAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
-
 # -----------------------------
 # Product
 # -----------------------------
@@ -21,9 +23,19 @@ class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
 
     def get_queryset(self):
-        queryset = Product.objects.filter(is_active=True).select_related('category')
-        queryset = queryset.prefetch_related('images', 'variants')  # ManyToMany / reverse relations
+        cache_key = f"product_list:{self.request.query_params}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
 
+        queryset = Product.objects.filter(is_active=True) \
+            .select_related('category') \
+            .prefetch_related(
+                Prefetch('images', queryset=ProductImage.objects.all()),
+                Prefetch('variants', queryset=ProductVariant.objects.all())
+            )
+
+        # Filtering
         category_id = self.request.query_params.get('category_id')
         min_price = self.request.query_params.get('min_price')
         max_price = self.request.query_params.get('max_price')
@@ -38,58 +50,15 @@ class ProductListView(generics.ListAPIView):
         if search:
             queryset = queryset.filter(name__icontains=search)
 
-        return queryset.order_by('-created_at')
-
-
-
-class ProductDetailView(generics.RetrieveAPIView):from rest_framework import generics, status
-from rest_framework.response import Response
-from django.utils import timezone
-from django.db.models import Q
-from .models import Category, Product, FeaturedProduct
-from .serializers import CategorySerializer, ProductSerializer, FeaturedProductSerializer
-
-
-# -----------------------------
-# Category
-# -----------------------------
-class CategoryListView(generics.ListAPIView):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
-
-
-# -----------------------------
-# Product
-# -----------------------------
-class ProductListView(generics.ListAPIView):
-    serializer_class = ProductSerializer
-
-    def get_queryset(self):
-        queryset = Product.objects.filter(is_active=True).select_related('category')
-        queryset = queryset.prefetch_related('images', 'variants')
-
-        category_id = self.request.query_params.get('category_id')
-        min_price = self.request.query_params.get('min_price')
-        max_price = self.request.query_params.get('max_price')
-        search = self.request.query_params.get('q')
-
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        if min_price:
-            queryset = queryset.filter(price__gte=min_price)
-        if max_price:
-            queryset = queryset.filter(price__lte=max_price)
-        if search:
-            queryset = queryset.filter(name__icontains=search)
-
-        return queryset.order_by('-created_at')
+        queryset = queryset.order_by('-created_at')
+        cache.set(cache_key, queryset, CACHE_TIMEOUT)
+        return queryset
 
 
 class ProductDetailView(generics.RetrieveAPIView):
-    queryset = Product.objects.all()
+    queryset = Product.objects.all().select_related('category').prefetch_related('images', 'variants')
     serializer_class = ProductSerializer
     lookup_field = 'id'
-
 
 # -----------------------------
 # Featured Products
@@ -101,10 +70,9 @@ class FeaturedProductListView(generics.ListAPIView):
         now = timezone.now()
         return FeaturedProduct.objects.filter(
             start_date__lte=now,
-        ).filter(
-            Q(end_date__gte=now) | Q(end_date__isnull=True),
             is_personalized=False
-        ).select_related('product', 'product__category') \
+        ).filter(Q(end_date__gte=now) | Q(end_date__isnull=True)) \
+         .select_related('product', 'product__category') \
          .prefetch_related('product__images', 'product__variants') \
          .order_by('-priority', '-start_date')
 
@@ -113,26 +81,31 @@ class PersonalizedFeaturedProductListView(generics.ListAPIView):
     serializer_class = FeaturedProductSerializer
 
     def get_queryset(self):
+        user = self.request.user if self.request.user.is_authenticated else None
         now = timezone.now()
-        user_id = self.request.query_params.get('user_id')
-        anon_id = self.request.query_params.get('anon_id')
-
-        # Start from active personalized featured products
         queryset = FeaturedProduct.objects.filter(
             start_date__lte=now,
             is_personalized=True
-        ).filter(
-            Q(end_date__gte=now) | Q(end_date__isnull=True)
-        ).select_related('product', 'product__category') \
+        ).filter(Q(end_date__gte=now) | Q(end_date__isnull=True)) \
+         .select_related('product', 'product__category') \
          .prefetch_related('product__images', 'product__variants')
 
-        # TODO: Implement personalization logic using wishlist, ratings, embeddings, events
-        # Example placeholder: just returning the queryset for now
-        return queryset.order_by('-priority', '-start_date')
+        if not user:
+            return queryset.order_by('-priority', '-start_date')
 
+        # Personalization: wishlist boost
+        wishlist_ids = set(Wishlist.objects.filter(user=user).values_list('product_id', flat=True))
+        def personalization_score(fp):
+            score = 1.0 if fp.product.id in wishlist_ids else 0.0
+            # TODO: Add rating, embeddings, event score
+            return score + (fp.priority / 100)  # small weight fallback
+
+        items = list(queryset)
+        items.sort(key=lambda x: personalization_score(x), reverse=True)
+        return items
 
 # -----------------------------
-# Admin Featured Products CRUD
+# Admin Featured Products
 # -----------------------------
 class AdminFeaturedProductCreateView(generics.CreateAPIView):
     serializer_class = FeaturedProductSerializer
@@ -146,27 +119,35 @@ class AdminFeaturedProductUpdateView(generics.UpdateAPIView):
 
 
 class AdminFeaturedProductDeleteView(generics.DestroyAPIView):
+    serializer_class = FeaturedProductSerializer
     queryset = FeaturedProduct.objects.all()
     lookup_field = 'id'
 
-    queryset = Product.objects.all()
-    serializer_class = ProductSerializer
-    lookup_field = 'id'
-
-
 # -----------------------------
-# Featured Products
+# Wishlist
 # -----------------------------
-class FeaturedProductListView(generics.ListAPIView):
-    serializer_class = FeaturedProductSerializer
+class WishlistListView(generics.ListAPIView):
+    serializer_class = WishlistSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        now = timezone.now()
-        return FeaturedProduct.objects.filter(
-            start_date__lte=now,
-        ).filter(
-            Q(end_date__gte=now) | Q(end_date__isnull=True)
-        ).select_related('product', 'product__category') \
-         .prefetch_related('product__images', 'product__variants') \
-         .order_by('-priority', '-start_date')
+        return Wishlist.objects.filter(user=self.request.user) \
+            .select_related('product', 'product__category') \
+            .prefetch_related('product__images', 'product__variants')
 
+
+class WishlistCreateView(generics.CreateAPIView):
+    serializer_class = WishlistSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class WishlistDeleteView(generics.DestroyAPIView):
+    serializer_class = WishlistSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_field = 'id'
+
+    def get_queryset(self):
+        return Wishlist.objects.filter(user=self.request.user)
