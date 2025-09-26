@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Product, ProductImage, ProductVariant, FeaturedProduct, ProductEmbedding, Wishlist
+from .models import Category, Product, ProductImage, ProductVariant, FeaturedProduct, ProductEmbedding, Wishlist,ProductReview
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -42,3 +42,11 @@ class WishlistSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wishlist
         fields = ["id", "user", "product", "created_at"]
+
+class ProductReviewSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = ProductReview
+        fields = ['id', 'product', 'user', 'rating', 'comment', 'is_public', 'is_anonymous', 'created_at', 'updated_at']
+        read_only_fields = ['user', 'created_at', 'updated_at']

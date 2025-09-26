@@ -45,6 +45,8 @@ class CartDetailView(generics.RetrieveUpdateDestroyAPIView):
 class CartAddItemView(generics.CreateAPIView):
     serializer_class = CartItemSerializer
     permission_classes = [permissions.IsAuthenticated]
+    queryset = CartItem.objects.none()
+    swagger_fake_view = True
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -64,6 +66,8 @@ class CartRemoveItemView(generics.DestroyAPIView):
 class CartCheckoutView(generics.GenericAPIView):
     serializer_class = CustomerOrderSerializer
     permission_classes = [permissions.IsAuthenticated]
+    queryset = CustomerOrder.objects.none()
+    swagger_fake_view = True
 
     @transaction.atomic
     def post(self, request, cart_id):

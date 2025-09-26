@@ -149,3 +149,22 @@ class Wishlist(models.Model):
 
     def __str__(self):
         return f"{self.user} → {self.product.name}"
+
+class ProductReview(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="reviews")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    rating = models.PositiveSmallIntegerField()
+    comment = models.TextField(blank=True, null=True)
+    is_public = models.BooleanField(default=True)
+    is_anonymous = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['product']),
+            models.Index(fields=['user']),
+        ]
+
+    def __str__(self):
+        return f"Review {self.rating}★ for {self.product.name}"

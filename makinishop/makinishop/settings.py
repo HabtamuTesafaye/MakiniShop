@@ -29,8 +29,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     # Third-party
-    'drf_spectacular',
     'rest_framework',
+    'drf_yasg',
     'rest_framework_simplejwt.token_blacklist',
     'graphene_django',
     'django_filters',
@@ -42,13 +42,10 @@ INSTALLED_APPS = [
     'users',
     'catalog',
     'orders',
-    'payments',
-    'wishlist',
-    'reviews',
-    'shipping',
     'notifications',
     'ai',
     'audit',
+    'user_events',
 
 ]
 
@@ -68,7 +65,7 @@ ROOT_URLCONF = "makinishop.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+         "DIRS": [BASE_DIR / "makinishop" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -149,17 +146,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
-}
-
-GRAPHENE = {
-    'SCHEMA': 'makinishop.schema.schema',  # we'll create this file
-    'MIDDLEWARE': [
-        'graphql_jwt.middleware.JSONWebTokenMiddleware',
-    ],
 }
 
 
@@ -167,3 +156,17 @@ AUTHENTICATION_BACKENDS = (
     'django.contrib.auth.backends.ModelBackend',  # default
     'guardian.backends.ObjectPermissionBackend',  # guardian
 )
+
+SWAGGER_SETTINGS = {
+    'USE_SESSION_AUTH': False,
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header'
+        }
+    },
+    'DOC_EXPANSION': 'list',
+    'SHOW_REQUEST_HEADERS': True,
+}
+
