@@ -40,3 +40,7 @@ class UserAddressSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+# fallback serilizer for views that don't need input validation 
+class EmptySerializer(serializers.Serializer):
+    pass

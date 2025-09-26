@@ -3,7 +3,7 @@ import environ
 import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env(
     DEBUG=(bool, True)
@@ -15,20 +15,8 @@ DEBUG = env('DEBUG')
 SECRET_KEY = env('DJANGO_SECRET_KEY')
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env('POSTGRES_DB'),
-        'USER': env('POSTGRES_USER'),
-        'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST'),
-        'PORT': env('POSTGRES_PORT'),
-    }
-}
 
-# Redis / Celery
-CELERY_BROKER_URL = f"amqp://{env('RABBITMQ_USER')}:{env('RABBITMQ_PASSWORD')}@{env('RABBITMQ_HOST')}:{env('RABBITMQ_PORT')}//"
-CELERY_RESULT_BACKEND = f"redis://{env('REDIS_HOST')}:{env('REDIS_PORT')}/0"
+AUTH_USER_MODEL = 'users.UserAccount'
 
 # Application definition
 
@@ -43,6 +31,7 @@ INSTALLED_APPS = [
     # Third-party
     'drf_spectacular',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'graphene_django',
     'django_filters',
     'corsheaders',
@@ -106,10 +95,14 @@ DATABASES = {
         'NAME': env('POSTGRES_DB'),
         'USER': env('POSTGRES_USER'),
         'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST'),
-        'PORT': env('POSTGRES_PORT'),
+        'HOST': env('POSTGRES_HOST'),  # now localhost / 127.0.0.1
+        'PORT': env('POSTGRES_EXTERNAL_PORT'),  # external port
     }
 }
+
+CELERY_BROKER_URL = f"amqp://{env('RABBITMQ_USER')}:{env('RABBITMQ_PASSWORD')}@{env('RABBITMQ_HOST')}:{env('RABBITMQ_PORT')}//"
+CELERY_RESULT_BACKEND = f"redis://{env('REDIS_HOST')}:{env('REDIS_PORT')}/0"
+
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -170,6 +163,7 @@ GRAPHENE = {
 }
 
 
-# Redis / Celery
-CELERY_BROKER_URL = f"amqp://{env('RABBITMQ_USER')}:{env('RABBITMQ_PASSWORD')}@{env('RABBITMQ_HOST')}:{env('RABBITMQ_PORT')}//"
-CELERY_RESULT_BACKEND = f"redis://{env('REDIS_HOST')}:{env('REDIS_PORT')}/0"
+AUTHENTICATION_BACKENDS = (
+    'django.contrib.auth.backends.ModelBackend',  # default
+    'guardian.backends.ObjectPermissionBackend',  # guardian
+)
