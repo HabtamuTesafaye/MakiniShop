@@ -82,17 +82,18 @@ class RecommendationFeedback(models.Model):
 
 
 class ChatSession(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)  
+    id = models.BigAutoField(primary_key=True) 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        null=True,  # allow null for anonymous
+        null=True,
         blank=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Session {self.id} for {self.user}"
+
 
 class ChatMessage(models.Model):
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')
