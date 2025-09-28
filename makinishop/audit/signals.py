@@ -4,13 +4,21 @@ from django.dispatch import receiver
 from django.apps import apps
 from .models import AuditLog
 import json
+from datetime import datetime
+from decimal import Decimal
 
 TRACKED_MODELS = ['Product', 'Category', 'Wishlist', 'FeaturedProduct']
 
 def model_to_dict(instance):
     data = {}
     for field in instance._meta.fields:
-        data[field.name] = getattr(instance, field.name)
+        value = getattr(instance, field.name)
+        if isinstance(value, datetime):
+            data[field.name] = value.isoformat()
+        elif isinstance(value, Decimal):
+            data[field.name] = float(value)
+        else:
+            data[field.name] = value
     return data
 
 @receiver(post_save)

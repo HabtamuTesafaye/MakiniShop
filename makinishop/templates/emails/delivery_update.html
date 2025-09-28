@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Delivery Update</h2>
+  <p>Hello {{ user.first_name }},</p>
+  <p>Your order <b>#{{ order_id }}</b> is now <b>{{ delivery_status }}</b>.</p>
+  <p>Track your order: <a href="{{ tracking_link }}">Tracking Link</a></p>
+  <p>Best regards,<br>MakiniShop Team</p>
+{% endblock %}

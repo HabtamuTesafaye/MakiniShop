@@ -67,6 +67,7 @@ class Product(models.Model):
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='images')
     path = models.TextField()
+    cloudinary_url = models.TextField(blank=True, null=True)  # New: Cloudinary image URL
     is_primary = models.BooleanField(default=False)
     width = models.IntegerField(null=True, blank=True)
     height = models.IntegerField(null=True, blank=True)

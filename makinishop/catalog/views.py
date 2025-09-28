@@ -1,3 +1,4 @@
+
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -10,6 +11,12 @@ from .serializers import (
     CategorySerializer, ProductSerializer, FeaturedProductSerializer,
     WishlistSerializer, ProductReviewSerializer
 )
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
+from utils.security import block_ip
+from utils.cloudinary_utils import upload_image_to_cloudinary
+from utils.email_utils import send_templated_email
+
 
 CACHE_TIMEOUT = 60  # seconds
 
@@ -38,7 +45,20 @@ class CategoryViewSet(viewsets.ModelViewSet):
 # -----------------------------
 # Product
 # -----------------------------
+@method_decorator(ratelimit(key='ip', rate='60/m', block=True), name='dispatch')
+@method_decorator(block_ip, name='dispatch')
 class ProductViewSet(viewsets.ModelViewSet):
+    # Example: override create to handle image upload
+    def create(self, request, *args, **kwargs):
+        # If image file is present in request.FILES, upload to Cloudinary
+        image_file = request.FILES.get('image')
+        if image_file:
+            image_url = upload_image_to_cloudinary(image_file, folder='products')
+            # Add image_url to validated_data or serializer context as needed
+            # Example: request.data['image_url'] = image_url
+            # You may need to adjust your ProductSerializer to accept image_url
+        # ...existing code for create...
+        return super().create(request, *args, **kwargs)
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     queryset = Product.objects.none()  # safe default
@@ -47,6 +67,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return Product.objects.none()
 
+        # Build cache key based on all query params
         cache_key = f"product_list:{self.request.query_params.urlencode()}"
         cached = cache.get(cache_key)
         if cached:
@@ -59,6 +80,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 Prefetch('variants', queryset=ProductVariant.objects.all())
             )
 
+        # Filtering
         category_id = self.request.query_params.get('category_id')
         min_price = self.request.query_params.get('min_price')
         max_price = self.request.query_params.get('max_price')
@@ -145,6 +167,9 @@ class FeaturedProductViewSet(viewsets.ModelViewSet):
 # -----------------------------
 # Wishlist
 # -----------------------------
+
+import os
+
 class WishlistViewSet(viewsets.ModelViewSet):
     serializer_class = WishlistSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -161,7 +186,27 @@ class WishlistViewSet(viewsets.ModelViewSet):
             .prefetch_related('product__images', 'product__variants')
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        wishlist = serializer.save(user=self.request.user)
+        # Example: get product image URL from Cloudinary (if available)
+        product_image_url = None
+        if wishlist.product.images.exists():
+            # Assuming ProductImage model has a 'file' field
+            product_image = wishlist.product.images.first()
+            if hasattr(product_image, 'file'):
+                product_image_url = upload_image_to_cloudinary(product_image.file, folder='products')
+        base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
+        send_templated_email.delay(
+            subject=f"Added to Cart: {wishlist.product.name}",
+            to_email=wishlist.user.email,
+            template_name="add_to_cart.html",
+            context={
+                'user': wishlist.user,
+                'product_name': wishlist.product.name,
+                'cart_link': f"{base_url}/cart/",
+                'product_image_url': product_image_url,
+            },
+            base_url=base_url
+        )
 
     @action(detail=False, methods=['GET'], url_path='search')
     def search(self, request):

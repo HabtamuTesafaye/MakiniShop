@@ -1,38 +1,37 @@
-# ai/services/featured.py
-from catalog.models import FeaturedProduct, Wishlist, ProductEmbedding
-from .models import ProductRating
-from user_event.models import UserEvent
+from catalog.models import FeaturedProduct, Wishlist, ProductEmbedding, ProductReview
+from user_events.models import UserEvent
+from ai.models import UserEmbedding
+from django.utils import timezone
+from django.db.models import Q
 import numpy as np
 
-def personalized_featured(user_id: int, top_n=20):
+def personalized_recommendations(user_id: int, top_n=20):
+    # Example: Use similar logic as personalized_featured
     featured = FeaturedProduct.objects.filter(
         start_date__lte=timezone.now(),
     ).filter(
         Q(end_date__isnull=True) | Q(end_date__gte=timezone.now())
     ).order_by('-priority', '-start_date')[:50]
 
-    # Compute personalization score
     scored = []
     wishlist_ids = set(Wishlist.objects.filter(user_id=user_id).values_list('product_id', flat=True))
-    user_ratings = {r.product_id: r.rating for r in ProductRating.objects.filter(user_id=user_id)}
+    user_ratings = {r.product_id: r.rating for r in ProductReview.objects.filter(user_id=user_id, rating__isnull=False)}
     user_events = {e.product_id: e.event_type for e in UserEvent.objects.filter(user_id=user_id)}
 
     user_emb = UserEmbedding.objects.filter(user_id=user_id).first()
-    if user_emb:
-        user_vector = np.frombuffer(user_emb.embedding, dtype=np.float32)
-    else:
-        user_vector = None
+    user_vector = np.frombuffer(user_emb.embedding, dtype=np.float32) if user_emb else None
 
     for f in featured:
         score = 0
         score += 0.4 if f.product_id in wishlist_ids else 0
         score += 0.3 * (user_ratings.get(f.product_id, 0) / 5.0)
-        if user_vector:
+        if user_vector is not None:
             prod_emb = ProductEmbedding.objects.filter(product=f.product).first()
             if prod_emb:
                 prod_vector = np.frombuffer(prod_emb.embedding, dtype=np.float32)
-                score += 0.2 * (np.dot(user_vector, prod_vector) / (np.linalg.norm(user_vector) * np.linalg.norm(prod_vector)))
-        # Events weight
+                denom = np.linalg.norm(user_vector) * np.linalg.norm(prod_vector)
+                if denom > 0:
+                    score += 0.2 * (np.dot(user_vector, prod_vector) / denom)
         event_score = 0
         if f.product_id in user_events:
             event_type = user_events[f.product_id]

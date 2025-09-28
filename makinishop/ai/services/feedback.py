@@ -1,4 +1,3 @@
-# ai/services/feedback.py
 import numpy as np
 from ai.models import RecommendationFeedback, UserEmbedding, ProductEmbedding
 
@@ -11,8 +10,6 @@ def update_user_embedding_from_feedback(user_id: int, product_id: int, weight=0.
 
     user_vector = np.frombuffer(user_emb.embedding, dtype=np.float32)
     product_vector = np.frombuffer(product_emb.embedding, dtype=np.float32)
-
-    # Simple incremental update: new_user = (1 - w)*old + w*product
-    updated_vector = (1 - weight) * user_vector + weight * product_vector
-    user_emb.embedding = updated_vector.tobytes()
+    new_vector = user_vector + weight * (product_vector - user_vector)
+    user_emb.embedding = new_vector.tobytes()
     user_emb.save()

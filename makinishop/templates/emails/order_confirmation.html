@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Order Confirmation</h2>
+  <p>Hello {{ user.first_name }},</p>
+  <p>Thank you for your order <b>#{{ order_id }}</b>!</p>
+  <p>We are processing your order and will notify you when it ships.</p>
+  <p>Order details:</p>
+  <ul>
+    {% for item in order_items %}
+      <li>{{ item.name }} x{{ item.quantity }}</li>
+    {% endfor %}
+  </ul>
+  <p>Total: {{ order_total }}</p>
+  <p>Best regards,<br>MakiniShop Team</p>
+{% endblock %}

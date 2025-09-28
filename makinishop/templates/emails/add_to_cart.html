@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Item Added to Cart</h2>
+  <p>Hello {{ user.first_name }},</p>
+  <p>You have added <b>{{ product_name }}</b> to your cart.</p>
+  <p><a href="{{ cart_link }}">View Cart</a></p>
+  <p>Happy shopping!<br>MakiniShop Team</p>
+{% endblock %}
