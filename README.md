@@ -116,19 +116,11 @@ All required keys are documented in [`.env.example`](.env.example).
 ---
 
 ## 📚 API & Docs
-
-- **REST**: `/api/` endpoints for all resources.
-- **Swagger**: `/swagger/` (public by default, can be restricted).
-
----
-
-## 🧩 Extending & Contributing
-
-- Each app is modular and can be extended independently.
-- Add new endpoints, Celery tasks, or models as needed.
-- PRs and issues welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+* **Swagger / OpenAPI**: [View API Docs](https://makinishop.onrender.com/api/docs/) (public by default, can be restricted).
+* **Deployed backend**: [https://makinishop.onrender.com](https://makinishop.onrender.com)
 
 ---
+
 
 ## 📝 Project Status
 
