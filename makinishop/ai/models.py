@@ -81,8 +81,14 @@ class RecommendationFeedback(models.Model):
 
 
 class ChatSession(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,  # allow null for anonymous
+        blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
+
 
 class ChatMessage(models.Model):
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')

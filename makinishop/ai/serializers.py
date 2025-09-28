@@ -31,5 +31,5 @@ class ChatSessionSerializer(serializers.ModelSerializer):
         model = ChatSession
         fields = ['id', 'user', 'created_at', 'messages']
 class ChatbotRequestSerializer(serializers.Serializer):
-    message = serializers.CharField()
-    session_id = serializers.UUIDField(required=False)
+    message = serializers.CharField(help_text="The message to send to the chatbot")
+    session_id = serializers.UUIDField(required=False, help_text="Optional session ID to continue a conversation")

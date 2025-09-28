@@ -203,28 +203,25 @@ class TrendingProductsView(GenericAPIView):
 # ------------------------
 # Chatbot
 # ------------------------
-class ChatbotView(APIView):
-    """
-    AI Chatbot powered by Gemini, integrated with our AI app.
-    Stores conversation in ChatSession and ChatMessage.
-    """
+class ChatbotView(GenericAPIView):
+    serializer_class = ChatbotRequestSerializer
+    permission_classes = []  # allow anonymous
 
-    @extend_schema(
-        request=ChatbotRequestSerializer,
-        responses={200: ChatSessionSerializer},
-        description="Interact with the chatbot and store the conversation.",
-    )
     def post(self, request):
-        serializer = ChatbotRequestSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         user_message = serializer.validated_data["message"]
         session_id = serializer.validated_data.get("session_id")
-        user = request.user
+        user = request.user if request.user.is_authenticated else None  # handle anonymous
 
         # Create or retrieve session
         if session_id:
             try:
-                session = ChatSession.objects.get(id=session_id, user=user)
+                session = ChatSession.objects.get(id=session_id)
+                # Optional: ensure session belongs to user if logged in
+                if session.user and session.user != user:
+                    return Response({"error": "Invalid session"}, status=status.HTTP_400_BAD_REQUEST)
             except ChatSession.DoesNotExist:
                 return Response({"error": "Invalid session"}, status=status.HTTP_400_BAD_REQUEST)
         else:
