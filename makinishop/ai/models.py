@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from catalog.models import Product
 from django.utils import timezone
+import uuid
 
 # ==========================================================
 # PRODUCT RECOMMENDATION
@@ -81,6 +82,7 @@ class RecommendationFeedback(models.Model):
 
 
 class ChatSession(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)  
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -89,6 +91,8 @@ class ChatSession(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return f"Session {self.id} for {self.user}"
 
 class ChatMessage(models.Model):
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')
