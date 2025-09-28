@@ -1,3 +1,4 @@
+
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -8,15 +9,27 @@ from orders.models import (
     Cart, CartItem, CustomerOrder, OrderItem, Payment,
     ProductDiscount, OrderDiscount, ShippingMethod, OrderShipping
 )
+
+# Email utility
+from utils.email_utils import send_templated_email
+import os
 from orders.serializers import (
     CartSerializer, CartItemSerializer, CustomerOrderSerializer,
     PaymentSerializer, ProductDiscountSerializer, OrderDiscountSerializer,
     ShippingMethodSerializer, OrderShippingSerializer, OrderItemSerializer
 )
 
+# --- Security decorators ---
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
+from utils.security import block_ip
+
 # ------------------------
 # Cart Views
 # ------------------------
+
+@method_decorator(ratelimit(key='user', rate='30/m', block=True), name='dispatch')
+@method_decorator(block_ip, name='dispatch')
 class CartListCreateView(generics.ListCreateAPIView):
     serializer_class = CartSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -91,6 +104,7 @@ class CartCheckoutView(generics.GenericAPIView):
 
         order = CustomerOrder.objects.create(user=request.user, total=0, status='pending')
         order_total = Decimal(0)
+        order_items = []
 
         for item in cart_items:
             original_total = Decimal(item.total)
@@ -113,6 +127,10 @@ class CartCheckoutView(generics.GenericAPIView):
                 quantity=item.quantity,
                 total=discounted_total
             )
+            order_items.append({
+                'name': item.product.name,
+                'quantity': item.quantity
+            })
 
             for discount in applied_discounts:
                 OrderDiscount.objects.create(
@@ -129,6 +147,21 @@ class CartCheckoutView(generics.GenericAPIView):
         cart.status = 'abandoned'
         cart.items.all().delete()
         cart.save()
+
+        # Send order confirmation email
+        base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
+        send_templated_email.delay(
+            subject=f"Order Confirmation #{order.id}",
+            to_email=request.user.email,
+            template_name="order_confirmation.html",
+            context={
+                'user': request.user,
+                'order_id': order.id,
+                'order_items': order_items,
+                'order_total': order_total,
+            },
+            base_url=base_url
+        )
 
         serializer = self.get_serializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -219,7 +252,19 @@ class PaymentListCreateView(generics.ListCreateAPIView):
         return Payment.objects.filter(order__id=order_id, order__user=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        payment = serializer.save(user=self.request.user)
+        # Send payment success email
+        base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
+        send_templated_email.delay(
+            subject=f"Payment Successful for Order #{payment.order.id}",
+            to_email=payment.user.email,
+            template_name="payment_success.html",
+            context={
+                'user': payment.user,
+                'order_id': payment.order.id,
+            },
+            base_url=base_url
+        )
 
 
 class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):

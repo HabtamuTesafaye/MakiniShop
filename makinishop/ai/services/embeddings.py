@@ -1,4 +1,3 @@
-# ai/services/embeddings.py
 import numpy as np
 from catalog.models import Product
 from ai.models import ProductEmbedding, UserEmbedding
@@ -8,13 +7,11 @@ from django.db import transaction
 VECTOR_DIM = 128  # example dimension
 
 def generate_product_embedding(product: Product) -> np.ndarray:
-    # Replace with real model
     text_features = (product.name + " " + product.description).lower()
     vector = np.random.rand(VECTOR_DIM).astype(np.float32)  # mock embedding
     return vector
 
 def generate_user_embedding(user: UserAccount) -> np.ndarray:
-    # Aggregate interactions (wishlist, ratings, events)
     vector = np.random.rand(VECTOR_DIM).astype(np.float32)
     return vector
 

@@ -1,8 +1,25 @@
+version: '3.9'
+
 services:
-  postgres:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: makinishop_backend
+    restart: always
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    ports:
+      - "8000:8000"
+
+  db:
     image: pgvector/pgvector:0.8.1-pg17-trixie
     container_name: pg17
     restart: always
+    env_file: .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -16,6 +33,7 @@ services:
     image: redis:8
     container_name: redis
     restart: always
+    env_file: .env
     ports:
       - "${REDIS_EXTERNAL_PORT}:${REDIS_PORT}"
 
@@ -23,18 +41,58 @@ services:
     image: rabbitmq:4-management
     container_name: rabbitmq
     restart: always
+    env_file: .env
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
       - "${RABBITMQ_EXTERNAL_PORT}:${RABBITMQ_PORT}"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celery_worker
+    restart: always
+    env_file: .env
+    command: ["./wait-for-rabbitmq.sh", "rabbitmq", "celery", "-A", "makinishop", "worker", "--loglevel=info", "--concurrency=2", "-Q", "default,emails,notifications,ai"]
+    depends_on:
+      - backend
+      - db
+      - redis
+      - rabbitmq
+    volumes:
+      - .:/app
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celery_beat
+    restart: always
+    env_file: .env
+    command: ["./wait-for-rabbitmq.sh", "rabbitmq", "celery", "-A", "makinishop", "beat", "--loglevel=info"]
+    depends_on:
+      - backend
+      - db
+      - redis
+      - rabbitmq
+    volumes:
+      - .:/app
+
 
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     container_name: jenkins
     restart: always
     user: root
+    env_file: .env
     ports:
       - "8080:8080"
       - "50000:50000"
@@ -44,3 +102,5 @@ services:
 volumes:
   pgdata:
   jenkins_home:
+  static_data:
+  media_data:

@@ -1,3 +1,4 @@
+
 from rest_framework.views import APIView
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
@@ -24,9 +25,16 @@ import google.generativeai as genai
 from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
+from utils.security import block_ip
+
 # ------------------------
 # Product-based recommendations
 # ------------------------
+
+@method_decorator(ratelimit(key='ip', rate='30/m', block=True), name='dispatch')
+@method_decorator(block_ip, name='dispatch')
 class ProductRecommendationView(GenericAPIView):
     serializer_class = ProductRecommendationSerializer
     queryset = ProductRecommendation.objects.none()  # Suppress schema warnings
@@ -52,6 +60,9 @@ class ProductRecommendationView(GenericAPIView):
 # ------------------------
 # User-specific recommendations
 # ------------------------
+
+@method_decorator(ratelimit(key='ip', rate='30/m', block=True), name='dispatch')
+@method_decorator(block_ip, name='dispatch')
 class UserRecommendationView(GenericAPIView):
     serializer_class = ProductRecommendationSerializer
     queryset = ProductRecommendation.objects.none()  # Suppress schema warnings

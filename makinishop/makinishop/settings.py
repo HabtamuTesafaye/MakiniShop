@@ -1,8 +1,22 @@
 from pathlib import Path
+
 import environ
 import os
 
+# Sentry integration
+SENTRY_DSN = os.environ.get('SENTRY_DSN')
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        traces_sample_rate=0.5,  # Adjust as needed
+        send_default_pii=True
+    )
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
+# BASE_DIR should resolve to the parent directory of 'makinishop', which is /app
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env(
@@ -27,16 +41,18 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # WhiteNoise development helper
+    'whitenoise.runserver_nostatic', 
 
     # Third-party
     'rest_framework',
     'drf_yasg',
     'rest_framework_simplejwt.token_blacklist',
-    'graphene_django',
     'django_filters',
     'corsheaders',
     'guardian',
     'storages',
+    'csp',
 
     # Project apps
     'users',
@@ -46,11 +62,13 @@ INSTALLED_APPS = [
     'ai',
     'audit',
     'user_events',
-
 ]
 
 MIDDLEWARE = [
+    # FIX: WhiteNoise MUST be added near the top, right after SecurityMiddleware
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware", 
+    'csp.middleware.CSPMiddleware',
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -59,6 +77,19 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "corsheaders.middleware.CorsMiddleware",    
 ]
+
+# FIX: Added 'unsafe-inline' to script-src and style-src directives.
+# This is often necessary because drf-yasg uses inline styles/scripts for Swagger UI.
+CONTENT_SECURITY_POLICY = {
+    'DIRECTIVES': {
+        'default-src': ("'self'",),
+        'script-src': ("'self'", 'cdn.jsdelivr.net', "'unsafe-inline'"), 
+        'style-src': ("'self'", 'fonts.googleapis.com', "'unsafe-inline'"), 
+        'font-src': ("'self'", 'fonts.gstatic.com'),
+        'img-src': ("'self'", 'data:'),
+    }
+}
+
 
 ROOT_URLCONF = "makinishop.urls"
 
@@ -80,7 +111,21 @@ TEMPLATES = [
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 
+
 WSGI_APPLICATION = "makinishop.wsgi.application"
+
+# Redis session storage
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{env('REDIS_HOST')}:{env('REDIS_PORT')}/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
+SESSION_CACHE_ALIAS = "default"
 
 
 # Database
@@ -92,8 +137,8 @@ DATABASES = {
         'NAME': env('POSTGRES_DB'),
         'USER': env('POSTGRES_USER'),
         'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST'),  # now localhost / 127.0.0.1
-        'PORT': env('POSTGRES_EXTERNAL_PORT'),  # external port
+        'HOST': env('POSTGRES_HOST'), 
+        'PORT': env('POSTGRES_PORT'),  
     }
 }
 
@@ -133,9 +178,14 @@ USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/4.2/howto/static-files/
+STATIC_URL = "/static/"
 
-STATIC_URL = "static/"
+# Collect static files here
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# FIX: WhiteNoise Configuration
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage" 
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -169,4 +219,3 @@ SWAGGER_SETTINGS = {
     'DOC_EXPANSION': 'list',
     'SHOW_REQUEST_HEADERS': True,
 }
-

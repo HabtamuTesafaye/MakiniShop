@@ -1,7 +1,8 @@
-# ai/services/featured.py
-from catalog.models import FeaturedProduct, Wishlist, ProductEmbedding
-from .models import ProductRating
-from user_event.models import UserEvent
+from catalog.models import FeaturedProduct, Wishlist, ProductEmbedding, ProductReview
+from user_events.models import UserEvent
+from ai.models import UserEmbedding
+from django.utils import timezone
+from django.db.models import Q
 import numpy as np
 
 def personalized_featured(user_id: int, top_n=20):
@@ -14,7 +15,8 @@ def personalized_featured(user_id: int, top_n=20):
     # Compute personalization score
     scored = []
     wishlist_ids = set(Wishlist.objects.filter(user_id=user_id).values_list('product_id', flat=True))
-    user_ratings = {r.product_id: r.rating for r in ProductRating.objects.filter(user_id=user_id)}
+    # Use ProductReview for ratings
+    user_ratings = {r.product_id: r.rating for r in ProductReview.objects.filter(user_id=user_id, rating__isnull=False)}
     user_events = {e.product_id: e.event_type for e in UserEvent.objects.filter(user_id=user_id)}
 
     user_emb = UserEmbedding.objects.filter(user_id=user_id).first()
@@ -31,7 +33,10 @@ def personalized_featured(user_id: int, top_n=20):
             prod_emb = ProductEmbedding.objects.filter(product=f.product).first()
             if prod_emb:
                 prod_vector = np.frombuffer(prod_emb.embedding, dtype=np.float32)
-                score += 0.2 * (np.dot(user_vector, prod_vector) / (np.linalg.norm(user_vector) * np.linalg.norm(prod_vector)))
+                # Avoid division by zero
+                denom = np.linalg.norm(user_vector) * np.linalg.norm(prod_vector)
+                if denom > 0:
+                    score += 0.2 * (np.dot(user_vector, prod_vector) / denom)
         # Events weight
         event_score = 0
         if f.product_id in user_events:

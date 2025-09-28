@@ -9,7 +9,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
-        fields = ['id', 'product', 'path', 'is_primary', 'width', 'height', 'metadata', 'created_at', 'updated_at']
+        fields = ['id', 'product', 'path', 'cloudinary_url', 'is_primary', 'width', 'height', 'metadata', 'created_at', 'updated_at']
 
 class ProductVariantSerializer(serializers.ModelSerializer):
     class Meta:
