@@ -1,5 +1,6 @@
 
 from rest_framework import generics, permissions, status, viewsets
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction
@@ -76,6 +77,8 @@ class CartRemoveItemView(generics.DestroyAPIView):
         return CartItem.objects.filter(cart__user=self.request.user)
 
 
+from utils.chapa import create_chapa_payment
+
 class CartCheckoutView(generics.GenericAPIView):
     serializer_class = CustomerOrderSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -88,83 +91,67 @@ class CartCheckoutView(generics.GenericAPIView):
         if not cart.items.exists():
             return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # --- create order as before ---
         now = timezone.now()
         cart_items = cart.items.select_related('product').all()
-        product_ids = [item.product_id for item in cart_items]
-
-        active_discounts = ProductDiscount.objects.filter(
-            product_id__in=product_ids,
-            active=True,
-            starts_at__lte=now,
-            ends_at__gte=now
-        )
-        discount_map = {}
-        for disc in active_discounts:
-            discount_map.setdefault(disc.product_id, []).append(disc)
-
         order = CustomerOrder.objects.create(user=request.user, total=0, status='pending')
         order_total = Decimal(0)
-        order_items = []
 
         for item in cart_items:
-            original_total = Decimal(item.total)
-            discounted_total = original_total
-            applied_discounts = []
-
-            for discount in discount_map.get(item.product_id, []):
-                if discount.type == 'percent':
-                    discounted_total *= (Decimal(100) - discount.amount) / Decimal(100)
-                elif discount.type in ['fixed', 'flash']:
-                    discounted_total = max(discounted_total - discount.amount, Decimal(0))
-                applied_discounts.append(discount)
-
-            discounted_total = discounted_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
+            total = Decimal(item.total)
             OrderItem.objects.create(
                 order=order,
                 product=item.product,
                 unit_price=item.unit_price,
                 quantity=item.quantity,
-                total=discounted_total
+                total=total
             )
-            order_items.append({
-                'name': item.product.name,
-                'quantity': item.quantity
-            })
-
-            for discount in applied_discounts:
-                OrderDiscount.objects.create(
-                    order=order,
-                    discount=discount,
-                    amount=original_total - discounted_total
-                )
-
-            order_total += discounted_total
+            order_total += total
 
         order.total = order_total
         order.save()
 
-        cart.status = 'abandoned'
-        cart.items.all().delete()
-        cart.save()
+        # --- initialize Chapa payment ---
+        callback_url = f"{os.environ.get('BASE_URL')}/api/payment/confirm/{order.id}/"
+        try:
+            chapa_resp = create_chapa_payment(
+                email=request.user.email,
+                amount=float(order_total),
+                tx_ref=str(order.id),
+                callback_url=callback_url
+            )
+        except Exception as e:
+            return Response({"error": f"Chapa payment failed: {str(e)}"},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Send order confirmation email
-        base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
-        send_templated_email.delay(
-            subject=f"Order Confirmation #{order.id}",
-            to_email=request.user.email,
-            template_name="order_confirmation.html",
-            context={
-                'user': request.user,
-                'order_id': order.id,
-                'order_items': order_items,
-                'order_total': order_total,
-            },
-            base_url=base_url
-        )
+        # Return Chapa payment URL to frontend
+        return Response({
+            "order_id": order.id,
+            "checkout_url": chapa_resp.get("data", {}).get("checkout_url")
+        }, status=status.HTTP_201_CREATED)
+    
 
-        serializer = self.get_serializer(order)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+class ChapaPaymentConfirmView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, order_id):
+        tx_ref = request.data.get("tx_ref")
+        status = request.data.get("status")
+
+        order = get_object_or_404(CustomerOrder, id=order_id)
+
+        if status == "success":
+            Payment.objects.create(
+                order=order,
+                user=order.user,
+                amount=order.total,
+                status="paid",
+                transaction_reference=tx_ref
+            )
+            order.status = "paid"
+            order.save()
+
+        return Response({"message": "Payment processed"})
 
 
 # ------------------------

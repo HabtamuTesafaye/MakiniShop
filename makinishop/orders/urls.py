@@ -5,7 +5,7 @@ from orders.views import (
     OrderItemListView, OrderItemDetailView,
     PaymentListCreateView, PaymentDetailView, PaymentConfirmView,
     OrderDiscountListCreateView, OrderDiscountDetailView,
-    OrderShippingListCreateView, OrderShippingDetailView, OrderShippingUpdateStatusView
+    OrderShippingListCreateView, OrderShippingDetailView, OrderShippingUpdateStatusView,ChapaPaymentConfirmView
 )
 
 urlpatterns = [
@@ -29,6 +29,7 @@ urlpatterns = [
     path('orders/<int:order_id>/payments/', PaymentListCreateView.as_view(), name='payment-list-create'),
     path('orders/<int:order_id>/payments/<int:pk>/', PaymentDetailView.as_view(), name='payment-detail'),
     path('orders/<int:order_id>/payments/<int:pk>/confirm/', PaymentConfirmView.as_view(), name='payment-confirm'),
+    path('payment/confirm/<int:order_id>/', ChapaPaymentConfirmView.as_view(), name='chapa-payment-confirm'),
 
     # Discounts
     path('orders/<int:order_id>/discounts/', OrderDiscountListCreateView.as_view(), name='order-discount-list-create'),

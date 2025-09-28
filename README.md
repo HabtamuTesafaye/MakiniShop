@@ -70,6 +70,11 @@ All required keys are documented in [`.env.example`](.env.example).
 
 ---
 
+## 📊 ER Diagram
+
+![MakiniShop ER Diagram](https://res.cloudinary.com/dvkx3kjbd/image/upload/v1759072774/erd_hxjltd.png)
+
+
 ## 🚀 Quickstart
 
 1. **Clone and configure:**

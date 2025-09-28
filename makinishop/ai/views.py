@@ -21,13 +21,13 @@ from .serializers import (
     ChatSessionSerializer,
 )
 import numpy as np
-import google.generativeai as genai
 from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 from utils.security import block_ip
+from google import genai  # new SDK import
 
 # ------------------------
 # Product-based recommendations
@@ -203,54 +203,56 @@ class TrendingProductsView(GenericAPIView):
 # ------------------------
 # Chatbot
 # ------------------------
-class ChatbotView(APIView):
-    """
-    AI Chatbot powered by Gemini, integrated with our AI app.
-    Stores conversation in ChatSession and ChatMessage.
-    """
+class ChatbotView(GenericAPIView):
+    serializer_class = ChatbotRequestSerializer
+    permission_classes = []  # allow anonymous
 
-    @extend_schema(
-        request=ChatbotRequestSerializer,
-        responses={200: ChatSessionSerializer},
-        description="Interact with the chatbot and store the conversation.",
-    )
     def post(self, request):
-        serializer = ChatbotRequestSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         user_message = serializer.validated_data["message"]
         session_id = serializer.validated_data.get("session_id")
-        user = request.user
+        user = request.user if request.user.is_authenticated else None
 
-        # Create or retrieve session
+        # ------------------------
+        # Retrieve or create session
+        # ------------------------
         if session_id:
             try:
-                session = ChatSession.objects.get(id=session_id, user=user)
+                session = ChatSession.objects.get(id=session_id)
+                if session.user and session.user != user:
+                    return Response({"error": "Invalid session"}, status=status.HTTP_400_BAD_REQUEST)
             except ChatSession.DoesNotExist:
                 return Response({"error": "Invalid session"}, status=status.HTTP_400_BAD_REQUEST)
         else:
             session = ChatSession.objects.create(user=user)
 
-        # Store user message
+        # Store user message in DB
         ChatMessage.objects.create(session=session, sender="user", message=user_message)
 
+        # ------------------------
         # Gemini API
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-pro")
+        # ------------------------
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-        history = [
-            {"role": "user" if msg.sender == "user" else "model", "parts": [{"text": msg.message}]}
-            for msg in session.messages.order_by("created_at")
-        ]
+        # Create a new chat (fresh every request)
+        chat = client.chats.create(model="gemini-2.0-flash")
 
-        response = model.generate_content(history)
+        # Replay all previous messages (user + bot)
+        for msg in session.messages.order_by("created_at"):
+            chat.send_message(msg.message)
+
+        # Send the latest user message (again, ensures Gemini responds)
+        response = chat.send_message(user_message)
+
+        # Extract Gemini’s reply
         bot_reply = response.text
 
-        # Store bot reply
+        # Store bot reply in DB
         ChatMessage.objects.create(session=session, sender="bot", message=bot_reply)
 
-        return Response(
-            {
-                "session_id": session.id,
-                "response": bot_reply,
-            }
-        )
+        return Response({
+            "session_id": session.id,
+            "response": bot_reply,
+        })
