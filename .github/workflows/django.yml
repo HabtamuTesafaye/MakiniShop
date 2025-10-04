@@ -13,7 +13,7 @@ jobs:
       max-parallel: 4
       matrix:
         # Drop 3.7 if you don't strictly need it, since it's EOL
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
